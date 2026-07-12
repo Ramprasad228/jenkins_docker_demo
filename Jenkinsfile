@@ -1,107 +1,94 @@
 pipeline {
-
     agent any
 
-    environment {
-
-        IMAGE_NAME = 'jenkins-docker-demo'
-
-        CONTAINER_NAME = 'jenkins-docker-container'
-
-        HOST_PORT = '8081'
-
-    }
-
     stages {
-
-        stage('checkout code') {
-
+        stage('Validate') {
             steps {
-
-                echo 'Downloading website code from GitHub'
-
-                checkout scm
-
-            }
-
-        }
-
-        stage('Build Docker Image') {
-
-            steps {
-
-                echo 'Building Docker image'
-
-                sh "docker build -t ${IMAGE_NAME}:${BUILD_NUMBER} ."
-
-            }
-
-        }
-
-        stage ('stop old container') {
-
-            steps {
-
-                echo 'Stopping old container'
+                echo 'Validating website files'
 
                 sh '''
+                    echo "Current Jenkins workspace:"
+                    pwd
 
-                    docker stop ${CONTAINER_NAME} || true
+                    echo "Files downloaded from GitHub:"
+                    ls -lh
 
-                    docker rm ${CONTAINER_NAME} || true
+                    echo "Checking index.html..."
+                    test -s index.html
 
+                    echo "Checking style.css..."
+                    test -s style.css
+
+                    echo "File sizes:"
+                    wc -c index.html
+                    wc -c style.css
+
+                    echo "Required website files are available and not empty"
                 '''
-
             }
-
         }
 
-        stage('Run Docker Container') {
-
+        stage('Deploy') {
             steps {
+                echo 'Deploying website to Nginx'
 
-                echo 'Running Docker container'
+                sh '''
+                    sudo rm -rf /usr/share/nginx/html/*
+                    sudo cp index.html style.css /usr/share/nginx/html/
 
-                sh "docker run -d --name ${CONTAINER_NAME} -p ${HOST_PORT}:80 ${IMAGE_NAME}:${BUILD_NUMBER}"
+                    echo "Files deployed to Nginx:"
+                    ls -lh /usr/share/nginx/html/
 
+                    echo "Checking deployed file sizes:"
+                    wc -c /usr/share/nginx/html/index.html
+                    wc -c /usr/share/nginx/html/style.css
+                '''
             }
+        }
 
+        stage('Restart Nginx') {
+            steps {
+                echo 'Restarting Nginx'
+
+                sh '''
+                    sudo systemctl restart nginx
+                    sudo systemctl status nginx --no-pager
+                '''
+            }
         }
 
         stage('Test Website') {
-
             steps {
-
                 echo 'Testing the deployed website'
 
                 sh '''
+                    echo "Checking deployed index.html..."
+                    test -s /usr/share/nginx/html/index.html
 
-                    curl --fail http://localhost:${HOST_PORT}
+                    echo "Checking HTTP response..."
+                    curl --fail --silent --show-error \
+                        http://localhost \
+                        --output /tmp/nginx-response.html
 
-                    echo "Website test successful"
+                    echo "Website response:"
+                    cat /tmp/nginx-response.html
 
+                    echo "Checking expected text..."
+                    grep -q "Deployment Successful" /tmp/nginx-response.html
+
+                    echo "Website content test successful"
                 '''
-
             }
-
         }
-
     }
 
     post {
-
         success {
-
-            echo 'Docker container deployed successfully!'
-
+            echo 'Nginx website deployed successfully!'
         }
 
         failure {
-
-            echo 'Deployment failed. Please check the logs for details.'
-
+            echo 'Website deployment failed. Check the Jenkins console output.'
         }
-
     }
-
 }
